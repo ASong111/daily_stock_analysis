@@ -42,12 +42,12 @@ jobs:
           fetch-depth: 0
       
       - name: 🔄 获取 base 分支
-        run: git fetch origin ${{ github.base_ref || 'main' }}:refs/remotes/origin/${{ github.base_ref || 'main' }}
-      
+        run: git fetch origin ${{ github.base_ref || 'master' }}:refs/remotes/origin/${{ github.base_ref || 'master' }}
+
       - name: 🔒 检查敏感文件修改
         id: check_sensitive
         run: |
-          BASE_REF="${{ github.base_ref || 'main' }}"
+          BASE_REF="${{ github.base_ref || 'master' }}"
           SENSITIVE_FILES=$(git diff --name-only origin/$BASE_REF...HEAD | grep -E '\.(github/workflows/.*\.yml|\.github/scripts/.*\.py)$' || echo "")
           
           if [ -n "$SENSITIVE_FILES" ]; then
@@ -85,7 +85,7 @@ jobs:
           fetch-depth: 0
       
       - name: 🔄 获取 base 分支
-        run: git fetch origin ${{ github.base_ref || 'main' }}:refs/remotes/origin/${{ github.base_ref || 'main' }}
+        run: git fetch origin ${{ github.base_ref || 'master' }}:refs/remotes/origin/${{ github.base_ref || 'master' }}
       
       - name: 🐍 设置 Python
         uses: actions/setup-python@v5
@@ -101,7 +101,7 @@ jobs:
       - name: 📋 检查变更文件
         id: check_files
         run: |
-          BASE_REF="${{ github.base_ref || 'main' }}"
+          BASE_REF="${{ github.base_ref || 'master' }}"
           CHANGED_FILES=$(git diff --name-only origin/$BASE_REF...HEAD -- '*.py' 2>/dev/null || echo "")
           if [ -z "$CHANGED_FILES" ]; then
             echo "has_py_changes=false" >> $GITHUB_OUTPUT
@@ -157,7 +157,7 @@ jobs:
       
       - name: 📊 变更统计
         run: |
-          BASE_REF="${{ github.base_ref || 'main' }}"
+          BASE_REF="${{ github.base_ref || 'master' }}"
           echo "## 📊 变更统计" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           STATS=$(git diff --stat origin/$BASE_REF...HEAD 2>/dev/null | tail -1)
@@ -195,7 +195,7 @@ jobs:
       
       - name: 🔄 获取 base 分支
         working-directory: pr-code
-        run: git fetch origin ${{ github.base_ref || 'main' }}:refs/remotes/origin/${{ github.base_ref || 'main' }}
+        run: git fetch origin ${{ github.base_ref || 'master' }}:refs/remotes/origin/${{ github.base_ref || 'master' }}
       
       - name: 🐍 设置 Python
         uses: actions/setup-python@v5
@@ -209,7 +209,7 @@ jobs:
         working-directory: pr-code
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_BASE_REF: ${{ github.base_ref || 'main' }}
+          GITHUB_BASE_REF: ${{ github.base_ref || 'master' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL_FALLBACK: ${{ vars.GEMINI_MODEL_FALLBACK || 'gemini-2.5-flash' }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

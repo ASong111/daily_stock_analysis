@@ -1,11 +1,11 @@
 # CI 流程 - Pull Request 自动检测
-# 当有 PR 提交或推送到 main 分支时自动运行
+# 当有 PR 提交或推送到 master 分支时自动运行
 
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - '**.py'
       - 'requirements.txt'
@@ -15,7 +15,7 @@ on:
       - 'Dockerfile'
       - 'docker-compose.yml'
   pull_request:
-    branches: [main]
+    branches: [master]
     paths:
       - '**.py'
       - 'requirements.txt'
