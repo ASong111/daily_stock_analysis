@@ -26,6 +26,7 @@ from src.notification import NotificationService, NotificationChannel
 from src.search_service import SearchService
 from src.enums import ReportType
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
+from src.market_filter import MarketFilter, MarketEnvironment
 from bot.models import BotMessage
 
 
@@ -64,18 +65,23 @@ class StockAnalysisPipeline:
         self.fetcher_manager = DataFetcherManager()
         # 不再单独创建 akshare_fetcher，统一使用 fetcher_manager 获取增强数据
         self.trend_analyzer = StockTrendAnalyzer()  # 趋势分析器
+        self.market_filter = MarketFilter()  # 市场环境过滤器
         self.analyzer = GeminiAnalyzer()
         self.notifier = NotificationService(source_message=source_message)
-        
+
         # 初始化搜索服务
         self.search_service = SearchService(
             bocha_keys=self.config.bocha_api_keys,
             tavily_keys=self.config.tavily_api_keys,
             serpapi_keys=self.config.serpapi_keys,
         )
+
+        # 市场环境缓存（避免重复分析）
+        self.market_environment: Optional[MarketEnvironment] = None
         
         logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
         logger.info("已启用趋势分析器 (MA5>MA10>MA20 多头判断)")
+        logger.info("已启用市场环境过滤器 (大盘趋势判断)")
         # 打印实时行情/筹码配置状态
         if self.config.enable_realtime_quote:
             logger.info(f"实时行情已启用 (优先级: {self.config.realtime_source_priority})")
@@ -135,22 +141,102 @@ class StockAnalysisPipeline:
             error_msg = f"获取/保存数据失败: {str(e)}"
             logger.error(f"[{code}] {error_msg}")
             return False, error_msg
-    
-    def analyze_stock(self, code: str) -> Optional[AnalysisResult]:
+
+    def get_market_environment(self) -> Optional[MarketEnvironment]:
         """
-        分析单只股票（增强版：含量比、换手率、筹码分析、多维度情报）
-        
+        获取市场环境（带缓存）
+
+        分析大盘趋势，用于调整个股买入门槛
+
+        Returns:
+            MarketEnvironment 或 None
+        """
+        # 如果已有缓存，直接返回
+        if self.market_environment is not None:
+            return self.market_environment
+
+        try:
+            logger.info("[市场过滤] 开始分析市场环境...")
+
+            # 1. 获取上证指数历史数据
+            sh_index_df = None
+            try:
+                sh_index_df, _ = self.fetcher_manager.get_daily_data('sh000001', days=30)
+                if sh_index_df is not None and not sh_index_df.empty:
+                    logger.info(f"[市场过滤] 获取上证指数数据成功，共 {len(sh_index_df)} 条")
+                else:
+                    logger.warning("[市场过滤] 上证指数数据为空")
+            except Exception as e:
+                logger.warning(f"[市场过滤] 获取上证指数数据失败: {e}")
+
+            # 2. 获取市场统计数据
+            market_stats = None
+            try:
+                import akshare as ak
+                df = ak.stock_zh_a_spot_em()
+                if df is not None and not df.empty:
+                    change_col = '涨跌幅'
+                    amount_col = '成交额'
+
+                    if change_col in df.columns:
+                        import pandas as pd
+                        df[change_col] = pd.to_numeric(df[change_col], errors='coerce')
+                        up_count = len(df[df[change_col] > 0])
+                        down_count = len(df[df[change_col] < 0])
+                        limit_up_count = len(df[df[change_col] >= 9.9])
+                        limit_down_count = len(df[df[change_col] <= -9.9])
+
+                        # 成交额
+                        total_amount = 0.0
+                        if amount_col in df.columns:
+                            df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce')
+                            total_amount = df[amount_col].sum() / 1e8  # 转为亿元
+
+                        market_stats = {
+                            'up_count': up_count,
+                            'down_count': down_count,
+                            'limit_up_count': limit_up_count,
+                            'limit_down_count': limit_down_count,
+                            'total_amount': total_amount,
+                        }
+                        logger.info(f"[市场过滤] 市场统计: 涨{up_count} 跌{down_count} "
+                                  f"涨停{limit_up_count} 跌停{limit_down_count} "
+                                  f"成交额{total_amount:.0f}亿")
+            except Exception as e:
+                logger.warning(f"[市场过滤] 获取市场统计数据失败: {e}")
+
+            # 3. 分析市场环境
+            env = self.market_filter.analyze_market_environment(sh_index_df, market_stats)
+
+            # 缓存结果
+            self.market_environment = env
+
+            # 打印市场环境报告
+            logger.info("\n" + self.market_filter.format_market_environment(env))
+
+            return env
+
+        except Exception as e:
+            logger.error(f"[市场过滤] 分析市场环境失败: {e}")
+            return None
+
+    def analyze_stock(self, code: str, market_env: Optional[MarketEnvironment] = None) -> Optional[AnalysisResult]:
+        """
+        分析单只股票（增强版：含量比、换手率、筹码分析、多维度情报、市场环境过滤）
+
         流程：
         1. 获取实时行情（量比、换手率）- 通过 DataFetcherManager 自动故障切换
         2. 获取筹码分布 - 通过 DataFetcherManager 带熔断保护
         3. 进行趋势分析（基于交易理念）
         4. 多维度情报搜索（最新消息+风险排查+业绩预期）
         5. 从数据库获取分析上下文
-        6. 调用 AI 进行综合分析
-        
+        6. 应用市场环境过滤（调整评分和乖离率阈值）
+        7. 调用 AI 进行综合分析
+
         Args:
             code: 股票代码
-            
+            market_env: 市场环境（可选，如果不提供则自动获取）
+
         Returns:
             AnalysisResult 或 None（如果分析失败）
         """
@@ -241,14 +327,48 @@ class StockAnalysisPipeline:
             
             # Step 6: 增强上下文数据（添加实时行情、筹码、趋势分析结果、股票名称）
             enhanced_context = self._enhance_context(
-                context, 
-                realtime_quote, 
-                chip_data, 
+                context,
+                realtime_quote,
+                chip_data,
                 trend_result,
                 stock_name  # 传入股票名称
             )
-            
-            # Step 7: 调用 AI 分析（传入增强的上下文和新闻）
+
+            # Step 7: 应用市场环境过滤（调整评分和乖离率阈值）
+            if market_env is None:
+                market_env = self.get_market_environment()
+
+            if market_env and trend_result:
+                # 应用市场过滤
+                filter_result = self.market_filter.apply_market_filter(
+                    trend_result.signal_score,
+                    market_env
+                )
+
+                # 将市场环境信息添加到上下文
+                enhanced_context['market_environment'] = {
+                    'trend': market_env.trend.value,
+                    'score': market_env.score,
+                    'sh_ma_status': market_env.sh_ma_status,
+                    'up_down_ratio': market_env.up_down_ratio,
+                    'score_adjustment': filter_result['score_adjustment'],
+                    'adjusted_bias_threshold': filter_result['adjusted_bias_threshold'],
+                    'position_suggestion': filter_result['position_suggestion'],
+                    'operation_suggestion': filter_result['operation_suggestion'],
+                }
+
+                # 记录过滤结果
+                logger.info(f"[{code}] 市场过滤: {market_env.trend.value}(评分{market_env.score}), "
+                          f"个股评分 {filter_result['original_score']} → {filter_result['adjusted_score']} "
+                          f"({filter_result['score_adjustment']:+d}), "
+                          f"乖离率阈值 {filter_result['original_bias_threshold']:.1f}% → "
+                          f"{filter_result['adjusted_bias_threshold']:.1f}%")
+
+                # 如果未通过过滤，记录原因
+                if not filter_result['passed']:
+                    logger.warning(f"[{code}] 未通过市场过滤: {filter_result['filter_reason']}")
+
+            # Step 8: 调用 AI 分析（传入增强的上下文和新闻）
             result = self.analyzer.analyze(enhanced_context, news_context=news_context)
             
             return result
@@ -362,7 +482,8 @@ class StockAnalysisPipeline:
         code: str,
         skip_analysis: bool = False,
         single_stock_notify: bool = False,
-        report_type: ReportType = ReportType.SIMPLE
+        report_type: ReportType = ReportType.SIMPLE,
+        market_env: Optional[MarketEnvironment] = None
     ) -> Optional[AnalysisResult]:
         """
         处理单只股票的完整流程
@@ -370,7 +491,7 @@ class StockAnalysisPipeline:
         包括：
         1. 获取数据
         2. 保存数据
-        3. AI 分析
+        3. AI 分析（含市场环境过滤）
         4. 单股推送（可选，#55）
 
         此方法会被线程池调用，需要处理好异常
@@ -380,6 +501,7 @@ class StockAnalysisPipeline:
             skip_analysis: 是否跳过 AI 分析
             single_stock_notify: 是否启用单股推送模式（每分析完一只立即推送）
             report_type: 报告类型枚举（从配置读取，Issue #119）
+            market_env: 市场环境（可选）
 
         Returns:
             AnalysisResult 或 None
@@ -398,8 +520,8 @@ class StockAnalysisPipeline:
             if skip_analysis:
                 logger.info(f"[{code}] 跳过 AI 分析（dry-run 模式）")
                 return None
-            
-            result = self.analyze_stock(code)
+
+            result = self.analyze_stock(code, market_env=market_env)
             
             if result:
                 logger.info(
@@ -471,7 +593,17 @@ class StockAnalysisPipeline:
         logger.info(f"===== 开始分析 {len(stock_codes)} 只股票 =====")
         logger.info(f"股票列表: {', '.join(stock_codes)}")
         logger.info(f"并发数: {self.max_workers}, 模式: {'仅获取数据' if dry_run else '完整分析'}")
-        
+
+        # === 获取市场环境（在分析个股前）===
+        market_env = None
+        if not dry_run:
+            market_env = self.get_market_environment()
+            if market_env:
+                logger.info(f"[市场环境] {market_env.trend.value}, 评分: {market_env.score}/100")
+                logger.info(f"[市场环境] {market_env.operation_suggestion}")
+            else:
+                logger.warning("[市场环境] 获取失败，将使用默认标准")
+
         # === 批量预取实时行情（优化：避免每只股票都触发全量拉取）===
         # 只有股票数量 >= 5 时才进行预取，少量股票直接逐个查询更高效
         if len(stock_codes) >= 5:
@@ -502,7 +634,8 @@ class StockAnalysisPipeline:
                     code,
                     skip_analysis=dry_run,
                     single_stock_notify=single_stock_notify and send_notification,
-                    report_type=report_type  # Issue #119: 传递报告类型
+                    report_type=report_type,  # Issue #119: 传递报告类型
+                    market_env=market_env  # 传递市场环境
                 ): code
                 for code in stock_codes
             }
