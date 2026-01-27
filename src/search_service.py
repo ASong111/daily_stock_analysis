@@ -691,38 +691,47 @@ class SearchService:
     ) -> Dict[str, SearchResponse]:
         """
         多维度情报搜索（同时使用多个引擎、多个维度）
-        
+
         搜索维度：
         1. 最新消息 - 近期新闻动态
         2. 风险排查 - 减持、处罚、利空
         3. 业绩预期 - 年报预告、业绩快报
-        
+
         Args:
             stock_code: 股票代码
             stock_name: 股票名称
             max_searches: 最大搜索次数
-            
+
         Returns:
             {维度名称: SearchResponse} 字典
         """
         results = {}
         search_count = 0
-        
+
+        # 获取当前时间信息（动态生成）
+        now = datetime.now()
+        current_year = now.year
+        current_month = now.month
+        current_year_month = f"{current_year}年{current_month}月"
+
+        # 年报年份：如果当前是1-4月，关注上一年年报；否则关注当年年报
+        report_year = current_year - 1 if current_month <= 4 else current_year
+
         # 定义搜索维度
         search_dimensions = [
             {
                 'name': 'latest_news',
-                'query': f"{stock_name} {stock_code} 最新 新闻 2026年1月",
+                'query': f"{stock_name} {stock_code} 最新 新闻 {current_year_month}",
                 'desc': '最新消息'
             },
             {
-                'name': 'risk_check', 
+                'name': 'risk_check',
                 'query': f"{stock_name} 减持 处罚 利空 风险",
                 'desc': '风险排查'
             },
             {
                 'name': 'earnings',
-                'query': f"{stock_name} 年报预告 业绩预告 业绩快报 2025年报",
+                'query': f"{stock_name} 年报预告 业绩预告 业绩快报 {report_year}年报",
                 'desc': '业绩预期'
             },
         ]

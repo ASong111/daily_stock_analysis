@@ -85,10 +85,34 @@ class HotSectorSelector:
         {'name': '锂电池', 'change_pct': 1.2, 'reason': '新能源车渗透率提升'},
     ]
 
+    # 备用板块成分股（当API失败时使用）
+    # 这些是各板块的代表性龙头股票
+    FALLBACK_SECTOR_STOCKS = {
+        '航空航天': ['600893', '002013', '600038', '000768', '002179', '600118', '600316', '002025', '600150', '002414'],
+        '半导体': ['600584', '002371', '603986', '688981', '002185', '300782', '002156', '300661', '002049', '300223'],
+        '芯片': ['002371', '300782', '002049', '300223', '002156', '300661', '002185', '600584', '603986', '002079'],
+        '新能源': ['300750', '002594', '300274', '002459', '300014', '002812', '300763', '002074', '300450', '002129'],
+        '医药': ['300347', '300015', '600276', '000661', '300122', '002821', '300759', '603259', '300003', '002422'],
+        '人工智能': ['002230', '300033', '002415', '300496', '002410', '300253', '002153', '300229', '002439', '300367'],
+        '新材料': ['002080', '002056', '300037', '002297', '300699', '002130', '300034', '002254', '300285', '002056'],
+        '通信设备': ['000063', '600050', '002583', '300136', '002396', '300628', '002281', '300502', '002115', '300308'],
+        '光伏': ['601012', '300274', '002459', '300763', '002129', '300393', '002506', '300118', '002531', '300316'],
+        '锂电池': ['300750', '002594', '300014', '002074', '300450', '002812', '300073', '002497', '300037', '002709'],
+        '贵金属': ['600489', '002155', '600547', '600988', '002237', '600489', '601069', '000506', '300139', '001337'],
+        '保险': ['601318', '601601', '601628', '601336', '601319', '601688'],
+        '银行': ['601398', '601939', '601288', '600036', '600016', '601328', '600000', '601166', '601169', '600015'],
+        '电子化学品': ['300236', '300655', '300666', '300398', '300576', '002409', '300346', '300285', '002409', '300346'],
+        '航天航空': ['600893', '002013', '600038', '000768', '002179', '600118', '600316', '002025', '600150', '002414'],
+        '航空机场': ['600004', '600009', '600115', '600221', '600029', '600897'],
+        '汽车整车': ['600104', '000625', '600066', '000800', '600741', '000550', '600418', '000868', '601238', '000927'],
+        '航运港口': ['601919', '600018', '601872', '600017', '601880', '600428', '601866', '600717', '600279', '601000'],
+    }
+
     def __init__(self):
         self.analyzer = StockTrendAnalyzer()
         self.fetcher = DataFetcherManager()
         self._stock_info_cache = {}  # 缓存股票信息，避免重复请求
+        self._sector_stocks_cache = {}  # 缓存板块成分股
 
     def get_hot_sectors(self, days: int = 3, top_n: int = 10) -> List[Dict[str, Any]]:
         """
@@ -101,27 +125,144 @@ class HotSectorSelector:
         Returns:
             热门板块列表 [{'name': '板块名', 'change_pct': 涨幅, 'reason': '热门原因'}, ...]
         """
-        import akshare as ak
         import time
 
         logger.info(f"[1/5] 获取近{days}日热门板块...")
 
+        # 尝试使用 Tushare 获取板块数据
+        tushare_sectors = self._get_hot_sectors_from_tushare(days, top_n)
+        if tushare_sectors:
+            return tushare_sectors
+
+        # Tushare 失败，尝试使用 akshare
+        akshare_sectors = self._get_hot_sectors_from_akshare(days, top_n)
+        if akshare_sectors:
+            return akshare_sectors
+
+        # 都失败了，使用备用数据
+        logger.warning("使用备用热门板块列表...")
+        return self.FALLBACK_SECTORS[:top_n]
+
+    def _get_hot_sectors_from_tushare(self, days: int, top_n: int) -> List[Dict[str, Any]]:
+        """使用 Tushare 获取热门板块"""
+        try:
+            from dotenv import load_dotenv
+            import os
+            import tushare as ts
+            import pandas as pd
+            from datetime import datetime, timedelta
+
+            load_dotenv()
+            token = os.getenv('TUSHARE_TOKEN')
+            if not token:
+                logger.info("  未配置 TUSHARE_TOKEN，跳过 Tushare 数据源")
+                return []
+
+            ts.set_token(token)
+            pro = ts.pro_api()
+
+            logger.info(f"  尝试使用 Tushare 获取板块数据...")
+
+            # 获取所有股票的行业分类
+            stock_basic = pro.stock_basic(exchange='', list_status='L',
+                                         fields='ts_code,symbol,name,industry')
+
+            if stock_basic is None or stock_basic.empty:
+                logger.warning("  Tushare 获取股票列表失败")
+                return []
+
+            # 计算每个行业的平均涨幅
+            end_date = datetime.now().strftime('%Y%m%d')
+            start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
+
+            industry_performance = {}
+
+            # 按行业分组
+            industries = stock_basic['industry'].dropna().unique()
+            logger.info(f"  共有 {len(industries)} 个行业分类")
+
+            for industry in industries[:30]:  # 只分析前30个行业，避免太慢
+                try:
+                    # 获取该行业的股票
+                    industry_stocks = stock_basic[stock_basic['industry'] == industry]['ts_code'].tolist()
+
+                    if len(industry_stocks) < 5:  # 行业股票太少，跳过
+                        continue
+
+                    # 随机抽样10只股票计算平均涨幅（避免请求太多）
+                    import random
+                    sample_stocks = random.sample(industry_stocks, min(10, len(industry_stocks)))
+
+                    total_change = 0
+                    valid_count = 0
+
+                    for ts_code in sample_stocks:
+                        try:
+                            df = pro.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+                            if df is not None and not df.empty and len(df) >= 2:
+                                # 计算涨幅
+                                first_close = df.iloc[-1]['close']
+                                last_close = df.iloc[0]['close']
+                                change_pct = ((last_close - first_close) / first_close) * 100
+                                total_change += change_pct
+                                valid_count += 1
+                        except:
+                            continue
+
+                    if valid_count > 0:
+                        avg_change = total_change / valid_count
+                        industry_performance[industry] = avg_change
+
+                except Exception as e:
+                    logger.debug(f"  处理行业 {industry} 失败: {e}")
+                    continue
+
+            if not industry_performance:
+                logger.warning("  Tushare 未能计算行业涨幅")
+                return []
+
+            # 按涨幅排序
+            sorted_industries = sorted(industry_performance.items(), key=lambda x: x[1], reverse=True)
+
+            hot_sectors = []
+            for idx, (industry, change_pct) in enumerate(sorted_industries[:top_n], 1):
+                reason = self._get_sector_reason(industry, change_pct)
+                hot_sectors.append({
+                    'name': industry,
+                    'change_pct': change_pct,
+                    'reason': reason,
+                    'code': '',
+                })
+                logger.info(f"  {idx}. {industry}: {change_pct:+.2f}% - {reason}")
+
+            logger.info(f"  ✓ Tushare 成功获取 {len(hot_sectors)} 个热门板块")
+            return hot_sectors
+
+        except Exception as e:
+            logger.warning(f"  Tushare 获取板块数据失败: {e}")
+            return []
+
+    def _get_hot_sectors_from_akshare(self, days: int, top_n: int) -> List[Dict[str, Any]]:
+        """使用 akshare 获取热门板块"""
+        import akshare as ak
+        import time
+
         # 重试机制
-        max_retries = 3
+        max_retries = 2
         for attempt in range(max_retries):
             try:
                 if attempt > 0:
-                    wait_time = 2 ** attempt  # 指数退避：2, 4, 8秒
+                    wait_time = 2 ** attempt
                     logger.info(f"  等待 {wait_time} 秒后重试...")
                     time.sleep(wait_time)
 
-                logger.info(f"  尝试获取板块数据 ({attempt + 1}/{max_retries})...")
+                logger.info(f"  尝试使用 akshare 获取板块数据 ({attempt + 1}/{max_retries})...")
 
                 # 获取板块行情
                 df = ak.stock_board_industry_name_em()
 
                 if df is None or df.empty:
-                    logger.warning("获取板块数据为空")
+                    logger.warning("  akshare 获取板块数据为空")
                     continue
 
                 # 按涨跌幅排序
@@ -149,18 +290,15 @@ class HotSectorSelector:
 
                         logger.info(f"  {idx+1}. {sector_name}: {change_pct:+.2f}% - {reason}")
 
-                    logger.info(f"  成功获取 {len(hot_sectors)} 个热门板块")
+                    logger.info(f"  ✓ akshare 成功获取 {len(hot_sectors)} 个热门板块")
                     return hot_sectors
 
             except Exception as e:
-                logger.warning(f"  第 {attempt + 1} 次尝试失败: {e}")
+                logger.warning(f"  akshare 第 {attempt + 1} 次尝试失败: {e}")
                 if attempt == max_retries - 1:
-                    logger.error(f"获取热门板块失败，已重试 {max_retries} 次")
-                    logger.warning("使用备用热门板块列表...")
-                    return self.FALLBACK_SECTORS[:top_n]
+                    logger.error(f"  akshare 获取热门板块失败，已重试 {max_retries} 次")
 
-        logger.warning("使用备用热门板块列表...")
-        return self.FALLBACK_SECTORS[:top_n]
+        return []
 
     def _get_sector_reason(self, sector_name: str, change_pct: float) -> str:
         """判断板块热门原因"""
@@ -183,19 +321,100 @@ class HotSectorSelector:
         Returns:
             股票代码列表
         """
+        # 检查缓存
+        if sector_name in self._sector_stocks_cache:
+            logger.info(f"    使用缓存的板块成分股数据")
+            return self._sector_stocks_cache[sector_name]
+
+        # 尝试使用 Tushare
+        tushare_stocks = self._get_sector_stocks_from_tushare(sector_name)
+        if tushare_stocks:
+            self._sector_stocks_cache[sector_name] = tushare_stocks
+            return tushare_stocks
+
+        # Tushare 失败，尝试使用 akshare
+        akshare_stocks = self._get_sector_stocks_from_akshare(sector_name)
+        if akshare_stocks:
+            self._sector_stocks_cache[sector_name] = akshare_stocks
+            return akshare_stocks
+
+        # 都失败了，使用备用数据
+        if sector_name in self.FALLBACK_SECTOR_STOCKS:
+            fallback_stocks = self.FALLBACK_SECTOR_STOCKS[sector_name]
+            logger.info(f"    ⚠ 使用备用数据（{len(fallback_stocks)} 只龙头股）")
+            self._sector_stocks_cache[sector_name] = fallback_stocks
+            return fallback_stocks
+
+        logger.warning(f"    ✗ 板块 {sector_name} 无法获取成分股")
+        return []
+
+    def _get_sector_stocks_from_tushare(self, sector_name: str) -> List[str]:
+        """使用 Tushare 获取板块成分股"""
+        try:
+            from dotenv import load_dotenv
+            import os
+            import tushare as ts
+
+            load_dotenv()
+            token = os.getenv('TUSHARE_TOKEN')
+            if not token:
+                return []
+
+            ts.set_token(token)
+            pro = ts.pro_api()
+
+            logger.info(f"    正在从 Tushare 获取板块成分股...")
+
+            # 获取该行业的所有股票
+            df = pro.stock_basic(exchange='', list_status='L',
+                               fields='ts_code,symbol,name,industry')
+
+            if df is None or df.empty:
+                return []
+
+            # 筛选该行业的股票
+            sector_df = df[df['industry'] == sector_name]
+
+            if sector_df.empty:
+                logger.info(f"    Tushare 中未找到行业 {sector_name}")
+                return []
+
+            # 转换为6位代码格式
+            codes = []
+            for ts_code in sector_df['ts_code'].tolist():
+                # ts_code 格式: 000001.SZ -> 000001
+                code = ts_code.split('.')[0]
+                name = sector_df[sector_df['ts_code'] == ts_code]['name'].iloc[0]
+
+                # 排除ST股票和科创板
+                if 'ST' not in name and '*' not in name:
+                    if not code.startswith('688') and not code.startswith('8') and not code.startswith('4'):
+                        codes.append(code)
+
+            if codes:
+                logger.info(f"    ✓ Tushare 成功获取 {len(codes)} 只股票")
+                return codes
+
+        except Exception as e:
+            logger.debug(f"    Tushare 获取失败: {e}")
+
+        return []
+
+    def _get_sector_stocks_from_akshare(self, sector_name: str) -> List[str]:
+        """使用 akshare 获取板块成分股"""
         import akshare as ak
         import time
 
-        # 重试机制
-        max_retries = 3
+        max_retries = 2
         for attempt in range(max_retries):
             try:
                 if attempt > 0:
-                    wait_time = min(2 ** attempt, 5)  # 最多等5秒
-                    logger.debug(f"    等待 {wait_time} 秒后重试...")
+                    wait_time = 5 * attempt
+                    logger.info(f"    第 {attempt + 1} 次重试，等待 {wait_time} 秒...")
                     time.sleep(wait_time)
 
-                # 获取板块成分股
+                logger.info(f"    正在从 akshare 获取板块成分股...")
+
                 df = ak.stock_board_industry_cons_em(symbol=sector_name)
 
                 if df is not None and not df.empty:
@@ -208,20 +427,20 @@ class HotSectorSelector:
                             code for code, name in zip(codes, names)
                             if 'ST' not in name
                             and '*' not in name
-                            and not code.startswith('688')  # 排除科创板
-                            and not code.startswith('8')    # 排除北交所
-                            and not code.startswith('4')    # 排除新三板
+                            and not code.startswith('688')
+                            and not code.startswith('8')
+                            and not code.startswith('4')
                         ]
 
                     if codes:
-                        logger.debug(f"    板块 {sector_name} 共 {len(codes)} 只股票（已排除ST和科创板）")
+                        logger.info(f"    ✓ akshare 成功获取 {len(codes)} 只股票")
                         return codes
 
             except Exception as e:
-                logger.debug(f"    获取板块 {sector_name} 成分股失败 (尝试 {attempt + 1}/{max_retries}): {e}")
+                logger.debug(f"    akshare 获取失败 (尝试 {attempt + 1}/{max_retries}): {str(e)[:80]}")
+                if attempt < max_retries - 1:
+                    time.sleep(3)
 
-        # 如果所有重试都失败，记录警告
-        logger.warning(f"    板块 {sector_name} 成分股获取失败，跳过该板块")
         return []
 
     def analyze_stock(
@@ -524,6 +743,13 @@ class HotSectorSelector:
             sector_reason = sector['reason']
 
             logger.info(f"\n  [{sector_idx}/10] 分析板块: {sector_name} ({sector['change_pct']:+.2f}%)")
+
+            # 在每个板块之间增加等待时间，避免API限流
+            if sector_idx > 1:
+                import time
+                wait_time = 3  # 每个板块之间等待3秒
+                logger.info(f"    等待 {wait_time} 秒以避免API限流...")
+                time.sleep(wait_time)
 
             # 获取板块成分股
             stock_codes = self.get_sector_stocks(sector_name)

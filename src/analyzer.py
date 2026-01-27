@@ -1239,11 +1239,12 @@ def get_analyzer() -> GeminiAnalyzer:
 if __name__ == "__main__":
     # 测试代码
     logging.basicConfig(level=logging.DEBUG)
-    
-    # 模拟上下文数据
+
+    # 模拟上下文数据（使用动态日期）
+    from datetime import datetime
     test_context = {
         'code': '600519',
-        'date': '2026-01-09',
+        'date': datetime.now().strftime('%Y-%m-%d'),
         'today': {
             'open': 1800.0,
             'high': 1850.0,

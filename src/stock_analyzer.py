@@ -793,11 +793,15 @@ def analyze_stock(df: pd.DataFrame, code: str) -> TrendAnalysisResult:
 if __name__ == "__main__":
     # 测试代码
     logging.basicConfig(level=logging.INFO)
-    
+
     # 模拟数据测试
     import numpy as np
-    
-    dates = pd.date_range(start='2025-01-01', periods=60, freq='D')
+    from datetime import datetime, timedelta
+
+    # 使用动态日期：从60天前到今天
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=59)
+    dates = pd.date_range(start=start_date, periods=60, freq='D')
     np.random.seed(42)
     
     # 模拟多头排列的数据
