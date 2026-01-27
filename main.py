@@ -45,7 +45,7 @@ from src.notification import NotificationService
 from src.core.pipeline import StockAnalysisPipeline
 from src.core.market_review import run_market_review
 from src.search_service import SearchService
-from src.analyzer import GeminiAnalyzer
+from src.analyzer import ClaudeAnalyzer
 
 # 配置日志格式
 LOG_FORMAT = '%(asctime)s | %(levelname)-8s | %(name)-20s | %(message)s'
@@ -407,10 +407,23 @@ def main() -> int:
                     tavily_keys=config.tavily_api_keys,
                     serpapi_keys=config.serpapi_keys
                 )
-            
-            if config.gemini_api_key:
+
+            # 智能选择 AI 分析器（优先级：Claude > Gemini）
+            analyzer = None
+            if config.claude_api_key:
+                logger.info("使用 Claude AI 分析器")
+                analyzer = ClaudeAnalyzer(
+                    api_key=config.claude_api_key,
+                    model=config.claude_model,
+                    base_url=config.claude_base_url
+                )
+            elif config.gemini_api_key:
+                logger.info("使用 Gemini AI 分析器")
+                from src.analyzer import GeminiAnalyzer
                 analyzer = GeminiAnalyzer(api_key=config.gemini_api_key)
-            
+            else:
+                logger.warning("未配置 AI API Key，将跳过 AI 分析")
+
             run_market_review(notifier, analyzer, search_service)
             return 0
         

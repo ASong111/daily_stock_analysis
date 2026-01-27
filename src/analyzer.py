@@ -1230,6 +1230,179 @@ class GeminiAnalyzer:
         return results
 
 
+class ClaudeAnalyzer:
+    """
+    Claude AI 分析器（支持自定义 base_url）
+
+    职责：
+    1. 调用 Anthropic Claude API 进行股票分析
+    2. 支持自定义 API 端点（base_url）
+    3. 使用与 GeminiAnalyzer 相同的分析逻辑和输出格式
+
+    使用方式：
+        # 使用官方 API
+        analyzer = ClaudeAnalyzer()
+
+        # 使用自定义 API 端点
+        analyzer = ClaudeAnalyzer(base_url="https://your-proxy.com/v1")
+
+        result = analyzer.analyze(context, news_context)
+    """
+
+    # 使用与 GeminiAnalyzer 相同的系统提示词
+    SYSTEM_PROMPT = GeminiAnalyzer.SYSTEM_PROMPT
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None
+    ):
+        """
+        初始化 Claude 分析器
+
+        Args:
+            api_key: Claude API Key（可选，默认从环境变量读取）
+            model: Claude 模型名称（可选，默认使用 claude-3-5-sonnet-20241022）
+            base_url: 自定义 API 端点（可选，默认使用官方 API）
+        """
+        from src.config import get_config
+
+        config = get_config()
+        self.api_key = api_key or config.claude_api_key
+        self.model = model or config.claude_model or "claude-3-5-sonnet-20241022"
+        self.base_url = base_url or config.claude_base_url  # 支持从配置读取
+
+        logger.info(f"Claude 分析器初始化: model={self.model}")
+        if self.base_url:
+            logger.info(f"使用自定义 API 端点: {self.base_url}")
+
+    def is_available(self) -> bool:
+        """检查 Claude API 是否可用"""
+        return bool(self.api_key)
+
+    def analyze(
+        self,
+        context: Dict[str, Any],
+        news_context: Optional[str] = None
+    ) -> AnalysisResult:
+        """
+        分析股票并生成决策仪表盘
+
+        Args:
+            context: 股票上下文数据（包含技术指标、筹码分布等）
+            news_context: 新闻搜索结果（可选）
+
+        Returns:
+            AnalysisResult 对象
+        """
+        if not self.is_available():
+            logger.error("Claude API Key 未配置")
+            return AnalysisResult(
+                code=context.get('code', ''),
+                success=False,
+                error_message="Claude API Key 未配置"
+            )
+
+        try:
+            # 导入 anthropic 库
+            try:
+                import anthropic
+            except ImportError:
+                logger.error("anthropic 库未安装，请运行: pip install anthropic")
+                return AnalysisResult(
+                    code=context.get('code', ''),
+                    success=False,
+                    error_message="anthropic 库未安装"
+                )
+
+            # 构建用户提示词（与 GeminiAnalyzer 相同的逻辑）
+            user_prompt = self._build_user_prompt(context, news_context)
+
+            # 创建 Claude 客户端
+            client_kwargs = {"api_key": self.api_key}
+            if self.base_url:
+                client_kwargs["base_url"] = self.base_url
+
+            client = anthropic.Anthropic(**client_kwargs)
+
+            logger.info(f"[{context.get('code')}] 调用 Claude API 进行分析...")
+            logger.debug(f"使用模型: {self.model}")
+            if self.base_url:
+                logger.debug(f"API 端点: {self.base_url}")
+
+            # 调用 Claude API
+            response = client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                system=self.SYSTEM_PROMPT,
+                messages=[
+                    {"role": "user", "content": user_prompt}
+                ]
+            )
+
+            # 提取响应文本
+            response_text = response.content[0].text
+            logger.debug(f"Claude 原始响应: {response_text[:500]}...")
+
+            # 解析 JSON 响应
+            result = self._parse_response(response_text, context.get('code', ''))
+
+            logger.info(f"[{context.get('code')}] Claude 分析完成")
+            return result
+
+        except Exception as e:
+            logger.error(f"Claude 分析失败: {e}", exc_info=True)
+            return AnalysisResult(
+                code=context.get('code', ''),
+                success=False,
+                error_message=f"Claude API 调用失败: {str(e)}"
+            )
+
+    def _build_user_prompt(
+        self,
+        context: Dict[str, Any],
+        news_context: Optional[str] = None
+    ) -> str:
+        """构建用户提示词（与 GeminiAnalyzer 相同）"""
+        # 复用 GeminiAnalyzer 的逻辑
+        analyzer = GeminiAnalyzer()
+        return analyzer._build_user_prompt(context, news_context)
+
+    def _parse_response(self, response_text: str, code: str) -> AnalysisResult:
+        """解析 Claude 响应（与 GeminiAnalyzer 相同）"""
+        # 复用 GeminiAnalyzer 的解析逻辑
+        analyzer = GeminiAnalyzer()
+        return analyzer._parse_response(response_text, code)
+
+    def batch_analyze(
+        self,
+        contexts: List[Dict[str, Any]],
+        delay_between: float = 2.0
+    ) -> List[AnalysisResult]:
+        """
+        批量分析多只股票
+
+        Args:
+            contexts: 上下文数据列表
+            delay_between: 每次分析之间的延迟（秒）
+
+        Returns:
+            AnalysisResult 列表
+        """
+        results = []
+
+        for i, context in enumerate(contexts):
+            if i > 0:
+                logger.debug(f"等待 {delay_between} 秒后继续...")
+                time.sleep(delay_between)
+
+            result = self.analyze(context)
+            results.append(result)
+
+        return results
+
+
 # 便捷函数
 def get_analyzer() -> GeminiAnalyzer:
     """获取 Gemini 分析器实例"""

@@ -21,7 +21,7 @@ from src.config import get_config, Config
 from src.storage import get_db
 from data_provider import DataFetcherManager
 from data_provider.realtime_types import ChipDistribution
-from src.analyzer import GeminiAnalyzer, AnalysisResult, STOCK_NAME_MAP
+from src.analyzer import ClaudeAnalyzer, GeminiAnalyzer, AnalysisResult, STOCK_NAME_MAP
 from src.notification import NotificationService, NotificationChannel
 from src.search_service import SearchService
 from src.enums import ReportType
@@ -66,7 +66,10 @@ class StockAnalysisPipeline:
         # 不再单独创建 akshare_fetcher，统一使用 fetcher_manager 获取增强数据
         self.trend_analyzer = StockTrendAnalyzer()  # 趋势分析器
         self.market_filter = MarketFilter()  # 市场环境过滤器
-        self.analyzer = GeminiAnalyzer()
+
+        # 智能选择 AI 分析器（优先级：Claude > Gemini）
+        self.analyzer = self._init_analyzer()
+
         self.notifier = NotificationService(source_message=source_message)
 
         # 初始化搜索服务
@@ -95,7 +98,55 @@ class StockAnalysisPipeline:
             logger.info("搜索服务已启用 (Tavily/SerpAPI)")
         else:
             logger.warning("搜索服务未启用（未配置 API Key）")
-    
+
+    def _init_analyzer(self):
+        """
+        智能初始化 AI 分析器
+
+        优先级策略：Claude > Gemini > OpenAI
+        - 如果配置了 Claude API Key，使用 Claude
+        - 否则如果配置了 Gemini API Key，使用 Gemini
+        - 否则如果配置了 OpenAI API Key，使用 OpenAI
+        - 都没配置则返回 None（仅技术分析）
+
+        Returns:
+            AI 分析器实例或 None
+        """
+        from src.analyzer import ClaudeAnalyzer, GeminiAnalyzer
+
+        # 优先使用 Claude
+        if self.config.claude_api_key:
+            logger.info("✅ 使用 Claude AI 分析器")
+            logger.info(f"   模型: {self.config.claude_model}")
+            if self.config.claude_base_url:
+                logger.info(f"   API 端点: {self.config.claude_base_url}")
+            return ClaudeAnalyzer(
+                api_key=self.config.claude_api_key,
+                model=self.config.claude_model,
+                base_url=self.config.claude_base_url
+            )
+
+        # 降级到 Gemini
+        elif self.config.gemini_api_key:
+            logger.info("✅ 使用 Gemini AI 分析器")
+            logger.info(f"   模型: {self.config.gemini_model}")
+            return GeminiAnalyzer(api_key=self.config.gemini_api_key)
+
+        # 降级到 OpenAI
+        elif self.config.openai_api_key:
+            logger.info("✅ 使用 OpenAI 兼容分析器")
+            logger.info(f"   模型: {self.config.openai_model}")
+            if self.config.openai_base_url:
+                logger.info(f"   API 端点: {self.config.openai_base_url}")
+            # 注意：需要实现 OpenAIAnalyzer 类
+            logger.warning("⚠️  OpenAIAnalyzer 尚未实现，将使用 Gemini")
+            return GeminiAnalyzer(api_key=self.config.gemini_api_key) if self.config.gemini_api_key else None
+
+        # 都没配置
+        else:
+            logger.warning("⚠️  未配置任何 AI API Key，将仅进行技术分析")
+            return None
+
     def fetch_and_save_stock_data(
         self, 
         code: str,
