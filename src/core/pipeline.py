@@ -65,7 +65,7 @@ class StockAnalysisPipeline:
         self.fetcher_manager = DataFetcherManager()
         # 不再单独创建 akshare_fetcher，统一使用 fetcher_manager 获取增强数据
         self.trend_analyzer = StockTrendAnalyzer()  # 趋势分析器
-        self.market_filter = MarketFilter()  # 市场环境过滤器
+        # self.market_filter = MarketFilter()  # 市场环境过滤器（已禁用）
 
         # 智能选择 AI 分析器（优先级：Claude > Gemini）
         self.analyzer = self._init_analyzer()
@@ -81,10 +81,11 @@ class StockAnalysisPipeline:
 
         # 市场环境缓存（避免重复分析）
         self.market_environment: Optional[MarketEnvironment] = None
-        
+
         logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
         logger.info("已启用趋势分析器 (MA5>MA10>MA20 多头判断)")
-        logger.info("已启用市场环境过滤器 (大盘趋势判断)")
+        # logger.info("已启用市场环境过滤器 (大盘趋势判断)")  # 已禁用
+        logger.info("市场环境过滤器已禁用")
         # 打印实时行情/筹码配置状态
         if self.config.enable_realtime_quote:
             logger.info(f"实时行情已启用 (优先级: {self.config.realtime_source_priority})")
@@ -202,74 +203,78 @@ class StockAnalysisPipeline:
         Returns:
             MarketEnvironment 或 None
         """
-        # 如果已有缓存，直接返回
-        if self.market_environment is not None:
-            return self.market_environment
+        # 市场环境过滤功能已禁用
+        logger.info("[市场过滤] 市场环境过滤功能已禁用")
+        return None
 
-        try:
-            logger.info("[市场过滤] 开始分析市场环境...")
-
-            # 1. 获取上证指数历史数据
-            sh_index_df = None
-            try:
-                sh_index_df, _ = self.fetcher_manager.get_daily_data('sh000001', days=30)
-                if sh_index_df is not None and not sh_index_df.empty:
-                    logger.info(f"[市场过滤] 获取上证指数数据成功，共 {len(sh_index_df)} 条")
-                else:
-                    logger.warning("[市场过滤] 上证指数数据为空")
-            except Exception as e:
-                logger.warning(f"[市场过滤] 获取上证指数数据失败: {e}")
-
-            # 2. 获取市场统计数据
-            market_stats = None
-            try:
-                import akshare as ak
-                df = ak.stock_zh_a_spot_em()
-                if df is not None and not df.empty:
-                    change_col = '涨跌幅'
-                    amount_col = '成交额'
-
-                    if change_col in df.columns:
-                        import pandas as pd
-                        df[change_col] = pd.to_numeric(df[change_col], errors='coerce')
-                        up_count = len(df[df[change_col] > 0])
-                        down_count = len(df[df[change_col] < 0])
-                        limit_up_count = len(df[df[change_col] >= 9.9])
-                        limit_down_count = len(df[df[change_col] <= -9.9])
-
-                        # 成交额
-                        total_amount = 0.0
-                        if amount_col in df.columns:
-                            df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce')
-                            total_amount = df[amount_col].sum() / 1e8  # 转为亿元
-
-                        market_stats = {
-                            'up_count': up_count,
-                            'down_count': down_count,
-                            'limit_up_count': limit_up_count,
-                            'limit_down_count': limit_down_count,
-                            'total_amount': total_amount,
-                        }
-                        logger.info(f"[市场过滤] 市场统计: 涨{up_count} 跌{down_count} "
-                                  f"涨停{limit_up_count} 跌停{limit_down_count} "
-                                  f"成交额{total_amount:.0f}亿")
-            except Exception as e:
-                logger.warning(f"[市场过滤] 获取市场统计数据失败: {e}")
-
-            # 3. 分析市场环境
-            env = self.market_filter.analyze_market_environment(sh_index_df, market_stats)
-
-            # 缓存结果
-            self.market_environment = env
-
-            # 打印市场环境报告
-            logger.info("\n" + self.market_filter.format_market_environment(env))
-
-            return env
-
-        except Exception as e:
-            logger.error(f"[市场过滤] 分析市场环境失败: {e}")
-            return None
+        # # 如果已有缓存，直接返回
+        # if self.market_environment is not None:
+        #     return self.market_environment
+        #
+        # try:
+        #     logger.info("[市场过滤] 开始分析市场环境...")
+        #
+        #     # 1. 获取上证指数历史数据
+        #     sh_index_df = None
+        #     try:
+        #         sh_index_df, _ = self.fetcher_manager.get_daily_data('000001', days=30)
+        #         if sh_index_df is not None and not sh_index_df.empty:
+        #             logger.info(f"[市场过滤] 获取上证指数数据成功，共 {len(sh_index_df)} 条")
+        #         else:
+        #             logger.warning("[市场过滤] 上证指数数据为空")
+        #     except Exception as e:
+        #         logger.warning(f"[市场过滤] 获取上证指数数据失败: {e}")
+        #
+        #     # 2. 获取市场统计数据
+        #     market_stats = None
+        #     try:
+        #         import akshare as ak
+        #         df = ak.stock_zh_a_spot_em()
+        #         if df is not None and not df.empty:
+        #             change_col = '涨跌幅'
+        #             amount_col = '成交额'
+        #
+        #             if change_col in df.columns:
+        #                 import pandas as pd
+        #                 df[change_col] = pd.to_numeric(df[change_col], errors='coerce')
+        #                 up_count = len(df[df[change_col] > 0])
+        #                 down_count = len(df[df[change_col] < 0])
+        #                 limit_up_count = len(df[df[change_col] >= 9.9])
+        #                 limit_down_count = len(df[df[change_col] <= -9.9])
+        #
+        #                 # 成交额
+        #                 total_amount = 0.0
+        #                 if amount_col in df.columns:
+        #                     df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce')
+        #                     total_amount = df[amount_col].sum() / 1e8  # 转为亿元
+        #
+        #                 market_stats = {
+        #                     'up_count': up_count,
+        #                     'down_count': down_count,
+        #                     'limit_up_count': limit_up_count,
+        #                     'limit_down_count': limit_down_count,
+        #                     'total_amount': total_amount,
+        #                 }
+        #                 logger.info(f"[市场过滤] 市场统计: 涨{up_count} 跌{down_count} "
+        #                           f"涨停{limit_up_count} 跌停{limit_down_count} "
+        #                           f"成交额{total_amount:.0f}亿")
+        #     except Exception as e:
+        #         logger.warning(f"[市场过滤] 获取市场统计数据失败: {e}")
+        #
+        #     # 3. 分析市场环境
+        #     env = self.market_filter.analyze_market_environment(sh_index_df, market_stats)
+        #
+        #     # 缓存结果
+        #     self.market_environment = env
+        #
+        #     # 打印市场环境报告
+        #     logger.info("\n" + self.market_filter.format_market_environment(env))
+        #
+        #     return env
+        #
+        # except Exception as e:
+        #     logger.error(f"[市场过滤] 分析市场环境失败: {e}")
+        #     return None
 
     def analyze_stock(self, code: str, market_env: Optional[MarketEnvironment] = None) -> Optional[AnalysisResult]:
         """
@@ -393,39 +398,40 @@ class StockAnalysisPipeline:
                 stock_name  # 传入股票名称
             )
 
-            # Step 7: 应用市场环境过滤（调整评分和乖离率阈值）
-            if market_env is None:
-                market_env = self.get_market_environment()
-
-            if market_env and trend_result:
-                # 应用市场过滤
-                filter_result = self.market_filter.apply_market_filter(
-                    trend_result.signal_score,
-                    market_env
-                )
-
-                # 将市场环境信息添加到上下文
-                enhanced_context['market_environment'] = {
-                    'trend': market_env.trend.value,
-                    'score': market_env.score,
-                    'sh_ma_status': market_env.sh_ma_status,
-                    'up_down_ratio': market_env.up_down_ratio,
-                    'score_adjustment': filter_result['score_adjustment'],
-                    'adjusted_bias_threshold': filter_result['adjusted_bias_threshold'],
-                    'position_suggestion': filter_result['position_suggestion'],
-                    'operation_suggestion': filter_result['operation_suggestion'],
-                }
-
-                # 记录过滤结果
-                logger.info(f"[{code}] 市场过滤: {market_env.trend.value}(评分{market_env.score}), "
-                          f"个股评分 {filter_result['original_score']} → {filter_result['adjusted_score']} "
-                          f"({filter_result['score_adjustment']:+d}), "
-                          f"乖离率阈值 {filter_result['original_bias_threshold']:.1f}% → "
-                          f"{filter_result['adjusted_bias_threshold']:.1f}%")
-
-                # 如果未通过过滤，记录原因
-                if not filter_result['passed']:
-                    logger.warning(f"[{code}] 未通过市场过滤: {filter_result['filter_reason']}")
+            # Step 7: 应用市场环境过滤（调整评分和乖离率阈值）- 已禁用
+            # if market_env is None:
+            #     market_env = self.get_market_environment()
+            #
+            # if market_env and trend_result:
+            #     # 应用市场过滤
+            #     filter_result = self.market_filter.apply_market_filter(
+            #         trend_result.signal_score,
+            #         market_env
+            #     )
+            #
+            #     # 将市场环境信息添加到上下文
+            #     enhanced_context['market_environment'] = {
+            #         'trend': market_env.trend.value,
+            #         'score': market_env.score,
+            #         'sh_ma_status': market_env.sh_ma_status,
+            #         'up_down_ratio': market_env.up_down_ratio,
+            #         'score_adjustment': filter_result['score_adjustment'],
+            #         'adjusted_bias_threshold': filter_result['adjusted_bias_threshold'],
+            #         'position_suggestion': filter_result['position_suggestion'],
+            #         'operation_suggestion': filter_result['operation_suggestion'],
+            #     }
+            #
+            #     # 记录过滤结果
+            #     logger.info(f"[{code}] 市场过滤: {market_env.trend.value}(评分{market_env.score}), "
+            #               f"个股评分 {filter_result['original_score']} → {filter_result['adjusted_score']} "
+            #               f"({filter_result['score_adjustment']:+d}), "
+            #               f"乖离率阈值 {filter_result['original_bias_threshold']:.1f}% → "
+            #               f"{filter_result['adjusted_bias_threshold']:.1f}%")
+            #
+            #     # 如果未通过过滤，记录原因
+            #     if not filter_result['passed']:
+            #         logger.warning(f"[{code}] 未通过市场过滤: {filter_result['filter_reason']}")
+            logger.info(f"[{code}] 市场环境过滤功能已禁用")
 
             # Step 8: 调用 AI 分析（传入增强的上下文和新闻）
             result = self.analyzer.analyze(enhanced_context, news_context=news_context)

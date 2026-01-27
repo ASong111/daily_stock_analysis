@@ -1310,8 +1310,19 @@ class ClaudeAnalyzer:
                 import anthropic
             except ImportError:
                 logger.error("anthropic 库未安装，请运行: pip install anthropic")
+
+                code = context.get('code', '')
+                name = context.get('stock_name', f'股票{code}')
+
                 return AnalysisResult(
-                    code=context.get('code', ''),
+                    code=code,
+                    name=name,
+                    sentiment_score=50,
+                    trend_prediction='震荡',
+                    operation_advice='观望',
+                    confidence_level='低',
+                    analysis_summary='AI 分析失败',
+                    risk_warning='anthropic 库未安装',
                     success=False,
                     error_message="anthropic 库未安装"
                 )
@@ -1332,14 +1343,27 @@ class ClaudeAnalyzer:
                 logger.debug(f"API 端点: {self.base_url}")
 
             # 调用 Claude API
-            response = client.messages.create(
-                model=self.model,
-                max_tokens=4096,
-                system=self.SYSTEM_PROMPT,
-                messages=[
-                    {"role": "user", "content": user_prompt}
-                ]
-            )
+            # 注意：某些 API 代理可能不支持 system 参数，需要将其合并到 user message 中
+            try:
+                response = client.messages.create(
+                    model=self.model,
+                    max_tokens=4096,
+                    system=self.SYSTEM_PROMPT,
+                    messages=[
+                        {"role": "user", "content": user_prompt}
+                    ]
+                )
+            except Exception as api_error:
+                # 如果 system 参数失败，尝试将其合并到 user message
+                logger.warning(f"使用 system 参数失败，尝试合并到 user message: {api_error}")
+                combined_prompt = f"{self.SYSTEM_PROMPT}\n\n---\n\n{user_prompt}"
+                response = client.messages.create(
+                    model=self.model,
+                    max_tokens=4096,
+                    messages=[
+                        {"role": "user", "content": combined_prompt}
+                    ]
+                )
 
             # 提取响应文本
             response_text = response.content[0].text
@@ -1353,8 +1377,20 @@ class ClaudeAnalyzer:
 
         except Exception as e:
             logger.error(f"Claude 分析失败: {e}", exc_info=True)
+
+            # 获取股票代码和名称
+            code = context.get('code', '')
+            name = context.get('stock_name', f'股票{code}')
+
             return AnalysisResult(
-                code=context.get('code', ''),
+                code=code,
+                name=name,
+                sentiment_score=50,
+                trend_prediction='震荡',
+                operation_advice='观望',
+                confidence_level='低',
+                analysis_summary='AI 分析失败',
+                risk_warning=f'Claude API 调用失败: {str(e)}',
                 success=False,
                 error_message=f"Claude API 调用失败: {str(e)}"
             )
@@ -1365,9 +1401,19 @@ class ClaudeAnalyzer:
         news_context: Optional[str] = None
     ) -> str:
         """构建用户提示词（与 GeminiAnalyzer 相同）"""
-        # 复用 GeminiAnalyzer 的逻辑
+        # 复用 GeminiAnalyzer 的 _format_prompt 逻辑
+        code = context.get('code', 'Unknown')
+
+        # 获取股票名称
+        name = context.get('stock_name')
+        if not name or name.startswith('股票'):
+            if 'realtime' in context and context['realtime'].get('name'):
+                name = context['realtime']['name']
+            else:
+                name = STOCK_NAME_MAP.get(code, f'股票{code}')
+
         analyzer = GeminiAnalyzer()
-        return analyzer._build_user_prompt(context, news_context)
+        return analyzer._format_prompt(context, name, news_context)
 
     def _parse_response(self, response_text: str, code: str) -> AnalysisResult:
         """解析 Claude 响应（与 GeminiAnalyzer 相同）"""
