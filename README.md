@@ -42,6 +42,19 @@
 > - [选股策略详解](docs/stock-selection-strategy.md)
 > - [市场环境过滤](docs/market-filter.md)
 
+## 🎓 学习中心
+
+**想系统学习股票交易？** 我们为你准备了完整的学习资源！
+
+📚 **[股票交易学习中心](docs/learning/README.md)** - 从零基础到独立交易
+
+- 🚀 [快速开始](docs/learning/quick_start.md) - 5分钟开始你的第一个分析
+- 🗺️ [学习路线图](docs/learning/learning_roadmap.md) - 30天系统学习计划
+- 📝 [详细学习笔记](docs/learning/stock_trading_basics.md) - 技术分析、基本面分析全覆盖
+- 🎯 [实践练习手册](docs/learning/practice_exercises.md) - 12个核心练习，边学边练
+
+**学习方法**：利用AI + 你的项目，通过实践掌握股票交易
+
 ## 🚀 快速开始
 
 ### 方式一：GitHub Actions（推荐，零成本）
@@ -189,6 +202,45 @@ python select_stocks.py --min-score 70 --top 20 --days 5 --stocks-per-sector 2
 - 📝 自选股列表（可直接复制到 `.env`）
 
 > 📖 详细使用方法请参考 [精准选股使用指南](docs/select-stocks-guide.md)
+
+### 🆕 趋势板块选股器（行业细分龙头策略）
+
+**基于资金流向和趋势交易三步法，专注行业细分龙头！**
+
+```bash
+# 使用默认配置（近3日资金流入前5板块，每板块2只，市值200-500亿）
+python trend_sector_selector.py
+
+# 自定义参数
+python trend_sector_selector.py --days 3 --top-sectors 5 --stocks-per-sector 2
+```
+
+#### 策略特点
+
+- 🎯 **资金流向** - 选择近3日资金流入最大的板块
+- 💎 **行业细分龙头** - 总市值200-500亿，流通市值>80亿，日均成交额>2亿
+- 📈 **趋势交易三步法**：
+  - **第一步（选赛道）**：板块指数在MA60上方且向上
+  - **第二步（等加油）**：股价回踩MA20成功止跌
+  - **第三步（对火花）**：MACD在零轴上方重新形成金叉
+- ⭐ **评分机制** - 三步全过100分，至少过2步才入选
+
+#### 适用场景
+
+- ✅ 价值成长型投资者
+- ✅ 关注资金流向和板块轮动
+- ✅ 偏好行业细分龙头，兼顾成长性和稳定性
+- ✅ 注重流动性和活跃度
+
+> 📖 详细使用方法请参考 [趋势板块选股器使用指南](docs/trend_sector_selector_guide.md)
+
+### 选股工具对比
+
+| 工具 | 侧重点 | 市值范围 | 适合人群 |
+|------|--------|----------|----------|
+| `select_stocks.py` | 成长股 | 50-1000亿 | 成长股投资者 |
+| `trend_sector_selector.py` | 行业细分龙头 | 200-500亿 | 价值成长型投资者 |
+| `stock_selector.py` | 全市场 | 不限 | 广撒网式选股 |
 
 ## 🖥️ 本地 WebUI（可选）
 
